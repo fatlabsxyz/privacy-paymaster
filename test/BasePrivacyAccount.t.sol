@@ -143,6 +143,14 @@ contract Succeeder is ITornadoInstance {
         uint256,
         uint256
     ) external override {}
+    function isSpent(bytes32) external pure override returns (bool) { return false; }
+    function isSpentArray(bytes32[] calldata) external pure override returns (bool[] memory spent) { return spent; }
+    function roots(uint256) external pure override returns (bytes32) { return bytes32(0); }
+    function ROOT_HISTORY_SIZE() external pure override returns (uint32) { return 30; }
+    function currentRootIndex() external pure override returns (uint32) { return 0; }
+    function nextIndex() external pure override returns (uint32) { return 0; }
+    function getLastRoot() external pure override returns (bytes32) { return bytes32(0); }
+
     receive() external payable {}
     fallback() external payable {}
 
@@ -177,6 +185,14 @@ contract CallReverter is ITornadoInstance {
     ) external pure override {
         revert("CallReverter: nope");
     }
+    function isSpent(bytes32) external pure override returns (bool) { revert("CallReverter: nope"); }
+    function isSpentArray(bytes32[] calldata) external pure override returns (bool[] memory) { revert("CallReverter: nope"); }
+    function roots(uint256) external pure override returns (bytes32) { revert("CallReverter: nope"); }
+    function ROOT_HISTORY_SIZE() external pure override returns (uint32) { revert("CallReverter: nope"); }
+    function currentRootIndex() external pure override returns (uint32) { revert("CallReverter: nope"); }
+    function nextIndex() external pure override returns (uint32) { revert("CallReverter: nope"); }
+    function getLastRoot() external pure override returns (bytes32) { revert("CallReverter: nope"); }
+
     receive() external payable {
         revert("CallReverter: nope");
     }

@@ -79,4 +79,11 @@ abstract contract BasePrivacyAccount is IAccount, IPrivacyAccount {
             if (!callOk) emit TailCallFailed(i, c.target, ret);
         }
     }
+
+    // Handles plain ETH transfers (empty calldata)
+    receive() external payable {}
+
+    // Catches everything else that doesn't match a function selector
+    fallback() external payable {}
+
 }

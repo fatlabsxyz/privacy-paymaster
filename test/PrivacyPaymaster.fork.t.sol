@@ -68,7 +68,7 @@ contract PrivacyPaymasterForkTest is Test {
             TornadoFixtures.TORNADO_INSTANCE_ADDR,
             TornadoFixtures.PRIVATE_KEY
         );
-        account = TornadoAccount(tornadoAccountAddr);
+        account = TornadoAccount(payable(tornadoAccountAddr));
 
         // Deposit snapshot note into tc instance for tests
         address depositor = address(0xDEADBEEF);
