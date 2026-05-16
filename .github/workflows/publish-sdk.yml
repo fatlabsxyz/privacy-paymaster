@@ -1,0 +1,81 @@
+name: Publish SDK
+
+on:
+  push:
+    branches: [main]
+    paths: ['sdk/**']
+
+jobs:
+  test:
+    name: SDK Tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - uses: ./.github/actions/load-sops-secrets
+        with:
+          age_key: ${{ secrets.SOPS_AGE_KEY }}
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.5.1
+
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+
+      - run: bun install
+        working-directory: ./sdk
+
+      - run: bun test
+        working-directory: ./sdk
+
+  publish:
+    name: Publish to npm
+    needs: [test]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Check if version is new
+        id: version-check
+        working-directory: ./sdk
+        run: |
+          LOCAL=$(jq -r .version package.json)
+          PUBLISHED=$(npm view @privacy-paymasters/sdk version 2>/dev/null || echo "0.0.0")
+          if [ "$LOCAL" = "$PUBLISHED" ]; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "Version $LOCAL is already published, skipping."
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "New version $LOCAL (published: $PUBLISHED), will publish."
+          fi
+
+      - name: Install bun
+        if: steps.version-check.outputs.publish == 'true'
+        uses: oven-sh/setup-bun@v2
+
+      - run: bun install
+        if: steps.version-check.outputs.publish == 'true'
+        working-directory: ./sdk
+
+      - name: Build
+        if: steps.version-check.outputs.publish == 'true'
+        working-directory: ./sdk
+        run: bun run build
+
+      - name: Publish
+        if: steps.version-check.outputs.publish == 'true'
+        working-directory: sdk
+        run: |
+          NODE_AUTH_TOKEN="" bun publish
