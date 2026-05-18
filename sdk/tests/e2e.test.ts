@@ -1,11 +1,11 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { Instance } from "prool";
 import { createWalletClient, getContract, http, parseAbi, publicActions, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { anvil } from "viem/chains";
 import { BundlerClient } from "../src/bundlerClient";
+import { startServers } from "../src/bundler-server";
 import { TornadoBuilder } from "../src/tornadoBuilder";
-import { runForge, setPkBalances } from "./utils";
+import { runForge } from "./utils";
 import chain from "../../config/chains/sepolia.toml";
 import configFixtures from "../../test/fixtures/tornadocash/config.json";
 import shieldFixtures from "../../test/fixtures/tornadocash/shield.json";
@@ -40,7 +40,14 @@ let paymasterAddr: Address = "0x00";
 let tornadoAccountAddr: Address = "0x00";
 
 beforeAll(async () => {
-    const servers = await startServers(SEPOLIA_RPC_URL);
+    const servers = await startServers({
+        forkUrl: SEPOLIA_RPC_URL,
+        forkBlockNumber: FORK_BLOCK_NUMBER,
+        entrypoint: chain.protocols.erc4337.entry_point,
+        executorPrivateKey: ALTO_EXECUTOR_PK,
+        utilityPrivateKey: ALTO_UTILITY_PK,
+        fundedPrivateKeys: [DEPLOYER_PK],
+    });
     stop = servers.stop;
     execRpcUrl = servers.execRpcUrl;
 
@@ -115,41 +122,6 @@ describe("tornado paymaster e2e", () => {
         expect(paymasterBalance).toBe(BigInt(unshieldFixtures.fee as number));
     }, 120_000);
 });
-
-async function startServers(rpcUrl: string): Promise<{
-    execRpcUrl: string;
-    bundlerRpcUrl: string;
-    stop: () => Promise<void>;
-}> {
-    const execServer = Instance.anvil({
-        forkUrl: rpcUrl,
-        forkBlockNumber: FORK_BLOCK_NUMBER,
-        chainId: anvil.id,
-    });
-    await execServer.start();
-    const executionRpcUrl = `http://localhost:${execServer.port}`;
-
-    await setPkBalances(executionRpcUrl, [DEPLOYER_PK, ALTO_EXECUTOR_PK, ALTO_UTILITY_PK]);
-
-    const bundlerServer = Instance.alto({
-        rpcUrl: executionRpcUrl,
-        entrypoints: [chain.protocols.erc4337.entry_point],
-        executorPrivateKeys: [ALTO_EXECUTOR_PK],
-        utilityPrivateKey: ALTO_UTILITY_PK,
-        safeMode: false,
-    });
-    await bundlerServer.start();
-    const bundlerRpcUrl = `http://localhost:${bundlerServer.port}`;
-
-    return {
-        execRpcUrl: executionRpcUrl,
-        bundlerRpcUrl,
-        stop: async () => {
-            await execServer.stop();
-            await bundlerServer.stop();
-        },
-    };
-}
 
 async function setupTornadocash(forkUrl: string) {
     console.log("Deploying Paymaster");
