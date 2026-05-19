@@ -15,6 +15,7 @@ export interface StartServersOptions {
     entrypoint: Address;
     executorPrivateKey?: Hex;
     utilityPrivateKey?: Hex;
+    port?: number;
     // Only applies in fork mode — anvil_setBalance is unavailable on external nodes.
     fundedPrivateKeys?: Hex[];
     safeMode?: boolean;
@@ -35,6 +36,7 @@ export async function startServers(options: StartServersOptions): Promise<Server
         utilityPrivateKey = DEFAULT_UTILITY_PK,
         fundedPrivateKeys = [],
         safeMode = false,
+        port = 8545
     } = options;
 
     if (!options.execRpcUrl && !forkUrl)
@@ -50,6 +52,7 @@ export async function startServers(options: StartServersOptions): Promise<Server
             forkUrl: forkUrl!,
             forkBlockNumber,
             chainId: anvil.id,
+            port,
         });
         await execServer.start();
         execRpcUrl = `http://localhost:${execServer.port}`;
@@ -70,7 +73,7 @@ export async function startServers(options: StartServersOptions): Promise<Server
         safeMode,
     });
     await bundlerServer.start();
-    const bundlerRpcUrl = `http://localhost:${bundlerServer.port}`;
+    const bundlerRpcUrl = `http://127.0.0.1:${bundlerServer.port}`;
 
     return {
         execRpcUrl,

@@ -12,6 +12,10 @@
     "./bundler-server": {
       "types": "./dist/src/bundler-server.d.ts",
       "import": "./dist/src/bundler-server.js"
+    },
+    "./deploy-paymaster": {
+      "types": "./dist/src/deploy-paymaster.d.ts",
+      "import": "./dist/src/deploy-paymaster.js"
     }
   },
   "files": [
@@ -25,8 +29,9 @@
     "typescript": "^5.9.0"
   },
   "scripts": {
-    "build": "bun build ./index.ts ./src/bundler-server.ts --outdir ./dist --target node --format esm --packages external && tsc -p tsconfig.build.json",
-    "bundler": "bun scripts/start-bundler.ts",
+    "build": "bun build ./index.ts ./src/bundler-server.ts ./src/deploy-paymaster.ts --outdir ./dist --target node --format esm --packages external && tsc -p tsconfig.build.json",
+    "serve-bundler": "bun scripts/start-bundler.ts",
+    "deploy": "bun scripts/deploy-paymaster.ts",
     "test": "bun test",
     "test:e2e": "bun test tests/e2e.test.ts"
   },

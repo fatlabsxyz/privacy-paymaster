@@ -4,8 +4,8 @@ import { privateKeyToAccount } from "viem/accounts";
 import { anvil } from "viem/chains";
 import { BundlerClient } from "../src/bundlerClient";
 import { startServers } from "../src/bundler-server";
+import { deployPaymaster } from "../src/deploy-paymaster";
 import { TornadoBuilder } from "../src/tornadoBuilder";
-import { runForge } from "./utils";
 import chain from "../../config/chains/sepolia.toml";
 import configFixtures from "../../test/fixtures/tornadocash/config.json";
 import shieldFixtures from "../../test/fixtures/tornadocash/shield.json";
@@ -25,10 +25,6 @@ const DEPLOYER_PK = configFixtures.deployerPrivateKey as Hex;
 const ALTO_EXECUTOR_PK = "0x4a3a02862ddcb260ed52d40ef03f8e3d78fa3d174b0ef333afdf1ffb4a648cd5" as Hex;
 const ALTO_UTILITY_PK = "0xdd4b2564c83ff7de602c39ffda1146055dc1814b07c083d7971722384f1f01a6" as Hex;
 
-// Test fixtures
-const STAKE_AMOUNT = "100000000000000000";
-const UNSTAKE_DELAY = "3600";
-const DEPOSIT_AMOUNT = "100000000000000000";
 
 // Assigned in `beforeAll`
 let execRpcUrl: string;
@@ -125,20 +121,11 @@ describe("tornado paymaster e2e", () => {
 
 async function setupTornadocash(forkUrl: string) {
     console.log("Deploying Paymaster");
-    const deploymentsPath = "../config/deployments/anvil-test.json";
-
-    // Clear previous deployments
-    await Bun.write(deploymentsPath, "{}");
-
-    // Deploy
-    const env = { ...process.env, DEPLOY_ENV: "anvil-test", PRIVATE_KEY: DEPLOYER_PK };
-    await runForge(["script", "DeployPaymaster", "--fork-url", forkUrl, "--broadcast"], env);
-    await runForge(["script", "StakePaymaster", "--fork-url", forkUrl, "--broadcast"], { ...env, STAKE_AMOUNT, UNSTAKE_DELAY, DEPOSIT_AMOUNT });
-    await runForge(["script", "DeployTornado", "--fork-url", forkUrl, "--broadcast"], env);
-
-    // Load deployed addrs
-    const deployments = await Bun.file(deploymentsPath).json();
-    paymasterAddr = deployments.paymaster.address as Address;
-    tornadoAccountAddr = deployments.tornado.tornadoAccount as Address;
+    const { paymasterAddress, tornadoAccountAddress } = await deployPaymaster({
+        forkUrl,
+        privateKey: DEPLOYER_PK,
+    });
+    paymasterAddr = paymasterAddress;
+    tornadoAccountAddr = tornadoAccountAddress;
 }
 
