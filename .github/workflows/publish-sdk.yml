@@ -8,6 +8,7 @@ on:
 jobs:
   test:
     name: SDK Tests
+    environment: SOPS
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -37,6 +38,7 @@ jobs:
 
   publish:
     name: Publish to npm
+    environment: SOPS
     needs: [test]
     runs-on: ubuntu-latest
     permissions:
