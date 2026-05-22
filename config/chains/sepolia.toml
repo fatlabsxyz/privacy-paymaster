@@ -1,15 +1,25 @@
 chain_id = 11155111
+block_time = 12
 
 [protocols.erc4337]
 entry_point = "0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108"
 
 [protocols.uniswap_v3]
 factory = "0x0227628f3F023bb0B980b67D528571c95c6DaC1c"
-twap_period = 3600
+twap_period = 300
 
 [protocols.tornado.eth_1]
 instance = "0x8cc930096B4Df705A007c4A039BDFA1320Ed2508"
 denomination = "1000000000000000000"
+
+[protocols.tornado.eth_0_1]
+instance = "0x8C4A04d872a6C1BE37964A21ba3a138525dFF50b"
+denomination = "100000000000000000"
+
+[protocols.tornado.dai_100]
+instance = "0x6921fd1a97441dd603a997ED6DDF388658daf754"
+denomination = "100000000000000000000"
+uniswap_fee = 500
 
 [protocols.railgun]
 smart_wallet = "0xeCFCf3b4eC647c4Ca6D49108b311b7a7C9543fea"
@@ -19,3 +29,4 @@ address = "0zk1qyv6eh0zv9rjqh2cl4mk30nuqy0s3g28a7rwddcfdrgfeqww7a93xunpd9kxwatwq
 
 [tokens]
 weth = "0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14"
+dai = "0xFF34B3d4Aee8ddCd6F9AFFFB6Fe49bD371b8a357"

@@ -1,5 +1,6 @@
-import { http, toHex, type Address, type EstimateUserOperationGasReturnType, type Hash } from "viem";
-import type { UserOperation, UserOperationReceipt, BundlerClient as ViemBundlerClient } from "viem/account-abstraction";
+import { decodeErrorResult, http, toHex, type Address, type EstimateUserOperationGasReturnType, type Hash } from "viem";
+import type { UserOperation, UserOperationReceipt, BundlerClient as ViemBundlerClient, } from "viem/account-abstraction";
+import { entryPoint08Abi } from "viem/account-abstraction";
 import { createBundlerClient as createViemBundlerClient } from "viem/account-abstraction";
 
 export type UserOperationGasPrice = {
@@ -17,7 +18,9 @@ export class BundlerClient {
     private client: ViemBundlerClient;
 
     constructor(bundlerUrl: string, public entryPoint: Address) {
-        this.client = createViemBundlerClient({ transport: http(bundlerUrl) });
+        this.client = createViemBundlerClient({
+          transport: http(bundlerUrl)
+        });
     }
 
     async estimateUserOperationGas(op: UserOperation): Promise<EstimateUserOperationGasReturnType> {
@@ -66,7 +69,8 @@ export class BundlerClient {
     }
 
     async sendUserOperation(op: UserOperation): Promise<Hash> {
-        return this.client.request({
+      try {
+        const _r = await this.client.request({
             method: "eth_sendUserOperation",
             params: [
                 {
@@ -88,6 +92,19 @@ export class BundlerClient {
                 this.entryPoint,
             ]
         })
+        return _r;
+      } catch (error) {
+        console.error(error);
+        let _error = (error as any)
+        if (_error?.data) {
+          const parsedError = decodeErrorResult({
+            abi: entryPoint08Abi,
+            data: _error.data
+          });
+          throw parsedError;
+        }
+        throw error;
+      }
     }
 
     async waitForUserOperationReceipt(hash: Hash): Promise<UserOperationReceipt> {

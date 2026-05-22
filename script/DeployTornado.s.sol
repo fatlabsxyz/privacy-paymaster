@@ -16,32 +16,38 @@ import {
 import {
     ITornadoInstance
 } from "../contracts/accounts/tornadocash/interfaces/ITornadoInstance.sol";
+import {
+    IUniswapV3Pool
+} from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
 
 contract DeployTornado is Script {
     function run() external {
         address paymasterAddr = Deployments.readAddress("paymaster", "address");
-        address tornadoInstanceAddr = Chains.readAddress(
-            "protocols.tornado.eth_1",
-            "instance"
-        );
+
         uint256 privateKey = vm.envUint("PRIVATE_KEY");
 
-        address deployment = deploy(
-            paymasterAddr,
-            tornadoInstanceAddr,
-            privateKey
-        );
-        console.log("Deployed TornadoAccount at:", deployment);
-        Deployments.writeAddress("tornado", "tornadoAccount", deployment);
+        string memory toml = vm.readFile(Chains.path());
+        string[] memory pools = vm.parseTomlKeys(toml, ".protocols.tornado");
+
+        for (uint256 i = 0; i < pools.length; i++) {
+            string memory tomlKey = string.concat("protocols.tornado.", pools[i]);
+            address deployed = deploy(paymasterAddr, tomlKey, privateKey);
+            console.log("Deployed TornadoAccount (%s) at: %s", pools[i], deployed);
+            Deployments.writeAddress(string.concat("tornado_", pools[i]), "tornadoAccount", deployed);
+        }
     }
 
     function deploy(
         address paymasterAddr,
-        address tornadoInstanceAddr,
+        string memory tornadoProtocolTomlKey,
         uint256 privateKey
     ) public returns (address) {
         PrivacyPaymaster paymaster = PrivacyPaymaster(payable(paymasterAddr));
         IEntryPoint entryPoint = paymaster.entryPoint();
+        address tornadoInstanceAddr = Chains.readAddress(
+            tornadoProtocolTomlKey,
+            "instance"
+        );
         ITornadoInstance tornadoInstance = ITornadoInstance(
             tornadoInstanceAddr
         );
@@ -49,11 +55,29 @@ contract DeployTornado is Script {
         vm.broadcast(privateKey);
         TornadoAccount tornadoAccount = new TornadoAccount(
             entryPoint,
-            tornadoInstance,
-            address(0)
+            tornadoInstance
         );
         vm.broadcast(privateKey);
         paymaster.setApprovedImpl(address(tornadoAccount), true);
+
+        address feeToken = tornadoAccount.FEE_TOKEN();
+        (bool allowed, ) = paymaster.feeTokens(feeToken);
+        if (feeToken != address(0) && !allowed) {
+            uint24 uniswapFee = uint24(Chains.readUint(
+                tornadoProtocolTomlKey,
+                "uniswap_fee"
+            ));
+            vm.broadcast(privateKey);
+            paymaster.setFeeToken(feeToken, uniswapFee, true);
+
+            // Expand pool observation buffer to cover the TWAP period
+            uint32 twapPeriod = paymaster.twapPeriod();
+            uint32 blockTime = uint32(Chains.readUint("block_time"));
+            uint16 requiredCardinality = uint16(twapPeriod / blockTime) + 1;
+            address pool = paymaster.FACTORY().getPool(feeToken, paymaster.WETH(), uniswapFee);
+            vm.broadcast(privateKey);
+            IUniswapV3Pool(pool).increaseObservationCardinalityNext(requiredCardinality);
+        }
 
         return address(tornadoAccount);
     }

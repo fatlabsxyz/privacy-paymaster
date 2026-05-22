@@ -29,18 +29,17 @@ contract TornadoAccount is BasePrivacyAccount {
     error InvalidProof();
 
     /// ----- IMMUTABLES -----
+    ITornadoInstance public immutable TORNADO_INSTANCE;
     // The token address for this TC instance, or address(0) for ETH instances.
     address public immutable FEE_TOKEN;
-    ITornadoInstance immutable TORNADO_INSTANCE;
     uint256 public immutable TORNADO_INSTANCE_DENOMINATION;
 
     constructor(
         IEntryPoint _entryPoint,
-        ITornadoInstance _tornadoInstance,
-        address _feeToken
+        ITornadoInstance _tornadoInstance
     ) BasePrivacyAccount(_entryPoint, address(_tornadoInstance)) {
-        FEE_TOKEN = _feeToken;
         TORNADO_INSTANCE = _tornadoInstance;
+        FEE_TOKEN = _handleToken(address(_tornadoInstance));
         TORNADO_INSTANCE_DENOMINATION = _tornadoInstance.denomination();
     }
 
@@ -135,4 +134,14 @@ contract TornadoAccount is BasePrivacyAccount {
             revert InvalidProof();
         }
     }
+}
+
+/// ERC20Tornado exposes a `token()` getter, ETHTornado does not.
+/// Returns the ERC20 address for token instances, or address(0) for ETH instances.
+function _handleToken(address tcInstance) view returns (address) {
+    (bool ok, bytes memory ret) = tcInstance.staticcall(abi.encodeWithSignature("token()"));
+    if (ok && ret.length == 32) {
+        return abi.decode(ret, (address));
+    }
+    return address(0);
 }

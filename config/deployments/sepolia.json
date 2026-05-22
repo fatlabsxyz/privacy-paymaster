@@ -1,11 +1,17 @@
 {
   "paymaster": {
-    "address": "0xBbbc86034C5371e098163A39eC1bb8B2f015bB74"
-  },
-  "tornado": {
-    "tornadoAccount": "0xdD14776222FeF5FfAF9F8f4c62653d011CE63A1F"
+    "address": "0xA0e2667AcdECb9bCDa6Fcf87638a962e2E9dB20D"
   },
   "railgun": {
     "railgunAccount": "0x304A1b31D6cC77616951579bD373A4bD8aeF4B4c"
+  },
+  "tornado_eth_1": {
+    "tornadoAccount": "0x191e3De3cF7f61de7EbEf4Bf45cfBA4f652d1C6e"
+  },
+  "tornado_eth_0_1": {
+    "tornadoAccount": "0x8A70E3dE493B8599447013f08d8b35719C8ED0ec"
+  },
+  "tornado_dai_100": {
+    "tornadoAccount": "0x060d053A6595630851ab873d6C95401b0C964d26"
   }
 }
