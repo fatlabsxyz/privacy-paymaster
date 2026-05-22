@@ -1,10 +1,14 @@
 {
   "name": "@privacy-paymasters/sdk",
-  "module": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "type": "module",
   "version": "0.0.3",
   "private": false,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Robert-MacWha/privacy-paymaster"
+  },
+  "type": "module",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -22,13 +26,6 @@
   "files": [
     "dist"
   ],
-  "devDependencies": {
-    "@types/bun": "latest",
-    "@types/node": "^25.8.0"
-  },
-  "peerDependencies": {
-    "typescript": "^5.9.0"
-  },
   "scripts": {
     "build": "bun build ./index.ts ./src/bundler-server.ts ./src/deploy-paymaster.ts --outdir ./dist --target node --format esm --packages external && tsc -p tsconfig.build.json",
     "serve-bundler": "bun scripts/start-bundler.ts",
@@ -41,6 +38,13 @@
     "prool": "^0.2.4",
     "smol-toml": "^1.6.1",
     "viem": "2.48.4"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^25.8.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5.9.0"
   },
   "publishConfig": {
     "access": "public",
