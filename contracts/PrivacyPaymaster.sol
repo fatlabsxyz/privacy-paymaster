@@ -53,19 +53,21 @@ contract PrivacyPaymaster is BasePaymaster {
     error FeeTokenNotAllowed(address feeToken);
     error InvalidSelector(bytes4 selector);
     error InsufficientFee(uint256 required, uint256 fee);
+    error OracleFailure(bytes reason);
 
     // ----- IMMUTABLES -----
     IUniswapV3Factory public immutable FACTORY;
     address public immutable WETH;
-    uint32 public immutable TWAP_PERIOD;
 
     // ----- STATE -----
+    uint32 public twapPeriod;
     mapping(address => bool) public approvedImpls;
     mapping(address => FeeToken) public feeTokens;
 
     // ----- EVENTS -----
     event ImplApproved(address indexed impl, bool approved);
     event FeeTokenSet(address indexed token, bool allowed);
+    event TwapPeriodSet(uint32 twapPeriod);
 
     // ----- CONSTRUCTOR -----
     constructor(
@@ -76,7 +78,7 @@ contract PrivacyPaymaster is BasePaymaster {
     ) BasePaymaster(_entryPoint) {
         FACTORY = _factory;
         WETH = _weth;
-        TWAP_PERIOD = _twapPeriod;
+        twapPeriod = _twapPeriod;
 
         // Native ETH is always allowed
         feeTokens[address(0)] = FeeToken({allowed: true, pool: address(0)});
@@ -93,6 +95,14 @@ contract PrivacyPaymaster is BasePaymaster {
     ) external onlyOwner {
         approvedImpls[impl] = approved;
         emit ImplApproved(impl, approved);
+    }
+
+    function setTwapPeriod(
+        uint32 _twapPeriod
+        // aderyn-ignore-next-line(centralization-risk)
+    ) external onlyOwner {
+        twapPeriod = _twapPeriod;
+        emit TwapPeriodSet(_twapPeriod);
     }
 
     function setFeeToken(
@@ -146,9 +156,12 @@ contract PrivacyPaymaster is BasePaymaster {
             revert FeeTokenNotAllowed(feeToken);
         }
 
-        uint256 requiredInToken = quoteWeiInToken(feeToken, maxCost);
-        if (feeAmount < requiredInToken) {
-            revert InsufficientFee(requiredInToken, feeAmount);
+        try this.quoteWeiInToken(feeToken, maxCost) returns (uint256 requiredInToken) {
+            if (feeAmount < requiredInToken) {
+                revert InsufficientFee(requiredInToken, feeAmount);
+            }
+        } catch (bytes memory reason) {
+            revert OracleFailure(reason);
         }
 
         context = "";
@@ -165,7 +178,7 @@ contract PrivacyPaymaster is BasePaymaster {
         uint128 weiAmount128 = uint128(weiAmount);
 
         address pool = feeTokens[feeToken].pool;
-        (int24 meanTick, ) = OracleLibrary.consult(pool, TWAP_PERIOD);
+        (int24 meanTick, ) = OracleLibrary.consult(pool, twapPeriod);
         return
             OracleLibrary.getQuoteAtTick(
                 meanTick,
