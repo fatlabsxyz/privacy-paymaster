@@ -26,30 +26,15 @@ contract DeployTornado is Script {
 
         uint256 privateKey = vm.envUint("PRIVATE_KEY");
 
-        address deployment_eth_1 = deploy(
-            paymasterAddr,
-            "protocols.tornado.eth_1",
-            privateKey
-        );
-        console.log("Deployed TornadoAccount (1 ETH) at:", deployment_eth_1);
-        Deployments.writeAddress("tornado_1", "tornadoAccount", deployment_eth_1);
+        string memory toml = vm.readFile(Chains.path());
+        string[] memory pools = vm.parseTomlKeys(toml, ".protocols.tornado");
 
-        address deployment_eth_0_1 = deploy(
-            paymasterAddr,
-            "protocols.tornado.eth_0_1",
-            privateKey
-        );
-        console.log("Deployed TornadoAccount (0.1 ETH) at:", deployment_eth_0_1);
-        Deployments.writeAddress("tornado_0_1", "tornadoAccount", deployment_eth_0_1);
-
-        address deployment_dai_100 = deploy(
-            paymasterAddr,
-            "protocols.tornado.dai_100",
-            privateKey
-        );
-        console.log("Deployed TornadoAccount (100 DAI) at:", deployment_dai_100);
-        Deployments.writeAddress("tornado_d_100", "tornadoAccount", deployment_dai_100);
-
+        for (uint256 i = 0; i < pools.length; i++) {
+            string memory tomlKey = string.concat("protocols.tornado.", pools[i]);
+            address deployed = deploy(paymasterAddr, tomlKey, privateKey);
+            console.log("Deployed TornadoAccount (%s) at: %s", pools[i], deployed);
+            Deployments.writeAddress(string.concat("tornado_", pools[i]), "tornadoAccount", deployed);
+        }
     }
 
     function deploy(
