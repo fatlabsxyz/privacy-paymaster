@@ -43,6 +43,16 @@ library Chains {
         return vm.parseTomlUint(toml, string.concat(".", section, ".", field));
     }
 
+    function readUint(
+        string memory field
+    ) internal view returns (uint256) {
+        string memory p = path();
+        require(vm.exists(p), string.concat("no chain file", p));
+
+        string memory toml = vm.readFile(p);
+        return vm.parseTomlUint(toml, string.concat(".", field));
+    }
+
     function readBytes32(
         string memory section,
         string memory field
