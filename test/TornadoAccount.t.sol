@@ -42,7 +42,7 @@ contract TornadoAccountForkTest is Test {
         tornado = ITornadoInstance(tornadoAddr);
         IEntryPoint entryPoint = IEntryPoint(entryPointAddr);
         denomination = tornado.denomination();
-        account = new TornadoAccount(entryPoint, tornado, address(0));
+        account = new TornadoAccount(entryPoint, tornado);
 
         address depositor = address(0xDEADBEEF);
         vm.deal(depositor, denomination);
