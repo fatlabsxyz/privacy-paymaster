@@ -75,9 +75,12 @@ jobs:
         run: bun run build
 
       # https://github.com/oven-sh/bun/issues/15601
-      - name: Install npm (for OIDC publish)
+      - name: Install npm
         if: steps.version-check.outputs.publish == 'true'
-        run: npm install -g npm@latest
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
 
       - name: Publish
         if: steps.version-check.outputs.publish == 'true'
