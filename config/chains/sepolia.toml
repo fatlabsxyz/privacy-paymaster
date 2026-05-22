@@ -6,7 +6,6 @@ entry_point = "0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108"
 
 [protocols.uniswap_v3]
 factory = "0x0227628f3F023bb0B980b67D528571c95c6DaC1c"
-swap_router = "0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E"
 twap_period = 300
 
 [protocols.tornado.eth_1]
