@@ -74,8 +74,12 @@ jobs:
         working-directory: ./sdk
         run: bun run build
 
+      # https://github.com/oven-sh/bun/issues/15601
+      - name: Install npm (for OIDC publish)
+        if: steps.version-check.outputs.publish == 'true'
+        run: npm install -g npm@latest
+
       - name: Publish
         if: steps.version-check.outputs.publish == 'true'
         working-directory: sdk
-        run: |
-          NODE_AUTH_TOKEN="" bun publish
+        run: npm publish
