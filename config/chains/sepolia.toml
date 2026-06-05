@@ -21,6 +21,11 @@ instance = "0x6921fd1a97441dd603a997ED6DDF388658daf754"
 denomination = "100000000000000000000"
 uniswap_fee = 500
 
+[protocols.privacypools]
+relay = "0xb52f2465C165791ebf2A1e3eD6c6Ef8055f996C6"
+pool_vault = "0x323C28ce5f21192Df8009215D3aBdf6011158347"
+entrypoint = "0x49Eac830F663578BDF2344C7371DC669DEaCf176"
+
 [protocols.railgun]
 smart_wallet = "0xeCFCf3b4eC647c4Ca6D49108b311b7a7C9543fea"
 master_public_key = "0x19acdde26147205d58fd7768be7c011f08a147ef86e6b70968d09c81cef74b13"
