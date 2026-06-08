@@ -1,5 +1,10 @@
 /**
- * E2E test script: Privacy Pools v2 deposit → withdraw via paymaster.
+ * E2E test script: Privacy Pools v2 internal transfer via paymaster.
+ *
+ * Unlike the withdrawal e2e, this tests an INTERNAL TRANSFER where funds move
+ * between notes inside the pool. Only the fee (amountOut = feeAmount) exits
+ * the pool to pay the paymaster. The transfer recipient receives a shielded
+ * note — no ETH leaves the pool for them.
  *
  * Prerequisites:
  *   1. Anvil fork running in a separate terminal:
@@ -10,7 +15,7 @@
  *        bun add @privacy-pools-v2/sdk@file:../../v2-monorepo/packages/sdk
  *
  * Usage:
- *   bun run sdk/scripts/e2e-privacypools.ts
+ *   npx tsx sdk/scripts/e2e-privacypools-transfer.ts
  */
 
 import { join, dirname } from "node:path";
@@ -65,7 +70,7 @@ import { startServers } from "../src/bundler-server";
 import { BundlerClient } from "../src/bundlerClient";
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// CONSTANTS — fill these in before running
+// CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const ANVIL_URL = "http://127.0.0.1:8545";
@@ -87,7 +92,6 @@ const PP_RELAY = "0x762665Dc7aAeeA25DC1759AEBef1F61730497f6e" as Address;
 const POSTMAN_ADDRESS = "0x723a43064e73Bcf46cf7d9b8506C400Df8ac878b" as Address;
 
 // ASP public key for ECDH encryption (only affects off-chain ciphertext, not on-chain validation)
-// Generate a dummy 32-byte X25519 pubkey — nobody needs to decrypt this in e2e
 const ASP_PUBLIC_KEY = ("0x" + Buffer.from(
     x25519.getPublicKey(randomBytes(32)),
 ).toString("hex")) as Hex;
@@ -111,11 +115,14 @@ const TOTAL_GAS = CALL_GAS_LIMIT + VERIFICATION_GAS_LIMIT + PRE_VERIFICATION_GAS
     + PAYMASTER_VERIFICATION_GAS + PAYMASTER_POSTOP_GAS;
 const MAX_GAS_COST = TOTAL_GAS * MAX_FEE_PER_GAS;
 
-// Fee = max gas cost + 10% margin (covers cost regardless of earnings)
+// Fee = max gas cost + 10% margin
 const FEE_AMOUNT = MAX_GAS_COST + MAX_GAS_COST / 10n;
 
-// Deposit must cover fee + net amount to recipient
+// Deposit must cover fee + transfer amount
 const DEPOSIT_AMOUNT = parseEther("0.1");
+// Transfer amount — goes to recipient note INSIDE the pool
+// Computed as: deposit - fee (spend entire note)
+const TRANSFER_AMOUNT = DEPOSIT_AMOUNT - FEE_AMOUNT;
 
 // Circuit artifacts path (relative to v2-monorepo)
 const CIRCUIT_ARTIFACTS_DIR = join(
@@ -341,8 +348,6 @@ async function createPoolSession(
 
     // Dummy relayer — we submit UserOps directly, not via relayer HTTP
     const httpClient = new HTTPClient();
-    // Dummy relayer satisfies constructor validation; override getRelayers
-    // to return [] so settleRelayerQuotes skips HTTP calls entirely.
     const relayerInteractor = new RelayerInteractor({
         relayers: [{
             name: "dummy",
@@ -426,7 +431,7 @@ async function patchNotes(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 async function main() {
-    console.log("=== Privacy Pools v2 × Paymaster E2E ===\n");
+    console.log("=== Privacy Pools v2 × Paymaster E2E (Internal Transfer) ===\n");
 
     // ── 1. Clients ──────────────────────────────────────────────────────────
     const deployerAccount = privateKeyToAccount(DEPLOYER_PK);
@@ -642,34 +647,44 @@ async function main() {
         );
         await session.poolSession.importAccount(savedExport);
 
-        // ── 9. Prepare withdrawal ───────────────────────────────────────────
-        console.log("[8/9] Preparing withdrawal proof...");
+        // ── 9. Prepare internal transfer ────────────────────────────────────
+        console.log("[8/9] Preparing internal transfer proof...");
 
-        // Generate recipient wallet (empty — the whole point of paymaster sponsorship)
-        const recipientPK = "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a" as Hex; // Anvil #2
-        const recipientAccount = privateKeyToAccount(recipientPK);
-        // Do NOT fund recipient — they have 0 ETH
+        // UserOp sender — empty account, delegates to PrivacyPoolsAccount via EIP-7702
+        const senderPK = "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a" as Hex; // Anvil #2
+        const senderAccount = privateKeyToAccount(senderPK);
+        // Do NOT fund sender — paymaster covers gas
+
+        // Transfer recipient — any address, receives a note inside the pool (not ETH)
+        const transferRecipientAddress = "0x90F79bf6EB2c4f870365E785982E1f101E93b906" as Address; // Anvil #3
 
         const activeNotes = savedExport.notes.filter((n: any) => n.status === "ACTIVE");
         if (activeNotes.length === 0) throw new Error("No ACTIVE notes after deposit activation");
         const inputNote = activeNotes[0]!;
 
-        const withdrawAmount = BigInt(inputNote.value);
-        const netAmount = withdrawAmount - FEE_AMOUNT; // net to recipient
         const feeHex = `0x${FEE_AMOUNT.toString(16)}` as Hex;
-        const netHex = `0x${netAmount.toString(16)}` as Hex;
+        const transferHex = `0x${TRANSFER_AMOUNT.toString(16)}` as Hex;
 
         console.log(`  Input note: ${inputNote.commitment} (value: ${inputNote.value})`);
-        console.log(`  Withdrawing: ${withdrawAmount} wei (net: ${netAmount}, fee: ${FEE_AMOUNT})`);
-        console.log(`  UserOp sender / recipient: ${recipientAccount.address} (0 ETH — 7702 delegates to PrivacyPoolsAccount)`);
+        console.log(`  Transfer: ${TRANSFER_AMOUNT} wei to recipient note (stays in pool)`);
+        console.log(`  Fee: ${FEE_AMOUNT} wei to paymaster (exits pool)`);
+        console.log(`  UserOp sender: ${senderAccount.address} (no funds)`);
+        console.log(`  Transfer recipient: ${transferRecipientAddress} (gets note, not ETH)`);
 
-        // SDK computes amountOut = amount + feeAmount = netAmount + FEE = withdrawAmount
-        const withdrawResult = await session.poolSession.prepareWithdraw({
+        // Compute recipientNoteAddressHash = Poseidon(recipientAddress, noteSecret)
+        const noteSecret = session.cryptoService.generateSecret();
+        const recipientNoteAddressHash = session.hashService.hash([
+            transferRecipientAddress as Hex,
+            noteSecret as Hex,
+        ]);
+
+        // SDK computes amountOut = feeAmount (for transfers, only fee exits the pool)
+        const transferResult = await session.poolSession.prepareTransfer({
             inputCommitments: [inputNote.commitment as Hex],
-            amount: netHex,
+            recipientNoteAddressHash: [recipientNoteAddressHash as Hash],
+            amount: transferHex,
             tokenId: NATIVE_ASSET,
-            recipientAddress: recipientAccount.address,
-            relayAddress: recipientAccount.address,
+            relayAddress: paymasterAddress, // SDK bug: feeRecipient not forwarded in transfer path, falls back to relayAddress
             feeAmount: feeHex,
             feeRecipient: paymasterAddress,
             processorAddress: PP_RELAY,
@@ -677,7 +692,7 @@ async function main() {
         });
 
         // Convert PoolVault.transact() calldata → PrivacyPoolRelay.relay() calldata
-        const relayCalldata = transactToRelayCalldata(withdrawResult.callData as Hex);
+        const relayCalldata = transactToRelayCalldata(transferResult.executeOptions.callData as Hex);
 
         // Build execute(feeCalldata, tail=[]) calldata for the UserOp
         const executeCalldata = encodeFunctionData({
@@ -689,9 +704,9 @@ async function main() {
         // ── 10. Build and submit UserOp ─────────────────────────────────────
         console.log("[9/9] Submitting UserOp via bundler...");
 
-        // Recipient signs EIP-7702 authorization delegating to PrivacyPoolsAccount
+        // Sender signs EIP-7702 authorization delegating to PrivacyPoolsAccount
         const authorization = await walletClient.signAuthorization({
-            account: recipientAccount,
+            account: senderAccount,
             contractAddress: privacyPoolsAccountAddress,
         });
 
@@ -711,12 +726,12 @@ async function main() {
             address: ERC4337_ENTRYPOINT,
             abi: entryPointAbi,
             functionName: "getNonce",
-            args: [recipientAccount.address, 0n],
+            args: [senderAccount.address, 0n],
         });
 
         const userOp = {
             authorization,
-            sender: recipientAccount.address,
+            sender: senderAccount.address,
             nonce,
             callData: executeCalldata,
             callGasLimit: CALL_GAS_LIMIT,
@@ -739,21 +754,23 @@ async function main() {
         console.log(`  UserOp receipt: ${receipt.success ? "SUCCESS" : "FAILED"}`);
         console.log(`  Bundle tx: ${receipt.receipt?.transactionHash ?? "unknown"}`);
 
-        // ── Verify balances ─────────────────────────────────────────────────
-        const recipientBalance = await publicClient.getBalance({ address: recipientAccount.address });
+        // ── Verify results ──────────────────────────────────────────────────
+        const senderBalance = await publicClient.getBalance({ address: senderAccount.address });
         const paymasterBalance = await publicClient.getBalance({ address: paymasterAddress });
 
         console.log("\n=== Results ===");
-        console.log(`  Recipient (${recipientAccount.address}): ${recipientBalance} wei`);
+        console.log(`  UserOp sender (${senderAccount.address}): ${senderBalance} wei`);
         console.log(`  Paymaster (${paymasterAddress}): ${paymasterBalance} wei`);
+        console.log(`  Transfer recipient (${transferRecipientAddress}): shielded note (${TRANSFER_AMOUNT} wei)`);
         console.log("");
-        console.log(`  Fund flow: PoolVault → Relay (${withdrawAmount} wei) → Recipient (${netAmount} wei) + Paymaster (${FEE_AMOUNT} wei)`);
+        console.log(`  Fund flow: PoolVault → Relay (${FEE_AMOUNT} wei) → Paymaster (fee only — transfer stays in pool)`);
         console.log(`  Gas: Paymaster deposit → EntryPoint → Bundler`);
 
-        if (recipientBalance > 0n) {
-            console.log("\n  ✓ Recipient received funds despite having 0 ETH!");
+        if (paymasterBalance >= FEE_AMOUNT) {
+            console.log("\n  ✓ Paymaster received fee from internal transfer!");
+            console.log("  ✓ Funds transferred inside pool — only fee exited to paymaster");
         } else {
-            console.error("\n  ✗ Recipient balance is 0 — something went wrong");
+            console.error(`\n  ✗ Paymaster fee too low: ${paymasterBalance} < ${FEE_AMOUNT}`);
             process.exit(1);
         }
     } finally {

@@ -41,7 +41,8 @@
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "@types/node": "^25.8.0"
+    "@types/node": "^25.8.0",
+    "tsx": "^4.22.4"
   },
   "peerDependencies": {
     "typescript": "^5.9.0"
