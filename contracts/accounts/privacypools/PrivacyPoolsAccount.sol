@@ -20,7 +20,6 @@ contract PrivacyPoolsAccount is BasePrivacyAccount {
     error InvalidSelector(bytes4 selector);
     error InvalidProcessor(address processor);
     error InvalidFeeRecipient(address feeRecipient);
-    error NonZeroNativeGas();
     error ZeroFee();
     error ZeroAmountOut();
     error FeeExceedsAmountOut(uint256 feeAmount, uint256 amountOut);
@@ -87,7 +86,6 @@ contract PrivacyPoolsAccount is BasePrivacyAccount {
         if (payout.feeRecipient != paymaster) {
             revert InvalidFeeRecipient(payout.feeRecipient);
         }
-        if (payout.nativeGas != 0) revert NonZeroNativeGas();
         if (payout.feeAmount == 0) revert ZeroFee();
 
         uint256 withdrawnValue = proof.amountOut();
