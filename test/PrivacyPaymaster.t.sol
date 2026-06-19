@@ -10,15 +10,18 @@ import {
 import {
     PackedUserOperation
 } from "@account-abstraction/contracts/interfaces/PackedUserOperation.sol";
+import {
+    IPaymaster
+} from "@account-abstraction/contracts/interfaces/IPaymaster.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {
     IUniswapV3Factory
 } from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
 
+import {PaymasterLib} from "../contracts/libraries/PaymasterLib.sol";
 import {PrivacyPaymaster} from "../contracts/PrivacyPaymaster.sol";
-import {IPrivacyAccount} from "../contracts/interfaces/IPrivacyAccount.sol";
-import {BasePrivacyAccount} from "../contracts/accounts/BasePrivacyAccount.sol";
+import {IFeeAdapter} from "../contracts/interfaces/IFeeAdapter.sol";
 
 contract PrivacyPaymasterTest is Test {
     uint256 internal constant FORK_BLOCK = 10_100_000;
@@ -26,11 +29,10 @@ contract PrivacyPaymasterTest is Test {
     address internal entryPointAddr;
     address internal weth;
 
-    PrivacyPaymaster internal paymaster;
     MockFactory internal factory;
+    MockFeeAdapter internal adapter;
+    PrivacyPaymaster internal paymaster;
 
-    // Sender for _validatePaymasterUserOp tests — etched with EIP-7702 delegation.
-    address internal approvedImpl;
     address internal sender = address(0x5EDE2);
 
     function setUp() public {
@@ -43,6 +45,7 @@ contract PrivacyPaymasterTest is Test {
         );
 
         factory = new MockFactory();
+        adapter = new MockFeeAdapter();
         paymaster = new PrivacyPaymaster(
             IEntryPoint(entryPointAddr),
             IUniswapV3Factory(address(factory)),
@@ -50,46 +53,27 @@ contract PrivacyPaymasterTest is Test {
             twapPeriod
         );
 
-        approvedImpl = address(
-            new MockPrivacyAccount(IEntryPoint(entryPointAddr), address(0))
-        );
-        // Give sender EIP-7702 delegation code pointing to approvedImpl.
-        vm.etch(sender, abi.encodePacked(bytes3(0xef0100), approvedImpl));
-        paymaster.setApprovedImpl(approvedImpl, true);
+        // Give sender EIP-7702 delegation code pointing to approvedAdapter.
+        vm.etch(sender, abi.encodePacked(bytes3(0xef0100), address(adapter)));
+        paymaster.setApprovedAdapter(address(adapter), true);
     }
 
     // ----- Helpers -----
 
     function _buildUserOp(
-        bytes memory feeCalldata
+        address _adapter
     ) internal view returns (PackedUserOperation memory op) {
-        op.sender = sender;
-        IPrivacyAccount.Call[] memory tail = new IPrivacyAccount.Call[](0);
-        op.callData = abi.encodeCall(
-            IPrivacyAccount.execute,
-            (feeCalldata, tail)
+        bytes memory paymasterData = abi.encode(
+            PaymasterLib.PaymasterData({adapter: _adapter, adapterData: ""})
         );
+
+        op.sender = sender;
         op.paymasterAndData = abi.encodePacked(
             address(paymaster),
             uint128(100_000),
-            uint128(50_000)
+            uint128(50_000),
+            paymasterData
         );
-    }
-
-    function _mockPreviewFee(address token, uint256 amount) internal {
-        vm.mockCall(
-            sender,
-            abi.encodeWithSelector(IPrivacyAccount.previewFee.selector),
-            abi.encode(token, amount)
-        );
-    }
-
-    function _validate(
-        PackedUserOperation memory op,
-        uint256 maxCost
-    ) internal returns (bytes memory context, uint256 validationData) {
-        vm.prank(entryPointAddr);
-        return paymaster.validatePaymasterUserOp(op, bytes32(0), maxCost);
     }
 
     // ----- Constructor -----
@@ -101,20 +85,19 @@ contract PrivacyPaymasterTest is Test {
         assertTrue(wethAllowed);
     }
 
-    // ----- setApprovedImpl -----
+    // ----- setApprovedAdapter -----
 
-    function test_setApprovedImpl() public {
-        address impl = address(0xABCD);
+    function test_setApprovedAdapter() public {
         vm.expectEmit(true, false, false, true);
-        emit PrivacyPaymaster.ImplApproved(impl, true);
-        paymaster.setApprovedImpl(impl, true);
-        assertTrue(paymaster.approvedImpls(impl));
+        emit PrivacyPaymaster.AdapterApproved(address(0xABCD), true);
+        paymaster.setApprovedAdapter(address(0xABCD), true);
+        assertTrue(paymaster.approvedAdapters(address(0xABCD)));
     }
 
-    function test_setApprovedImpl_rejectsNonOwner() public {
+    function test_setApprovedAdapter_rejectsNonOwner() public {
         vm.prank(address(0xBAD));
         vm.expectRevert();
-        paymaster.setApprovedImpl(address(0xABCD), true);
+        paymaster.setApprovedAdapter(address(0xABCD), true);
     }
 
     // ----- setFeeToken -----
@@ -161,13 +144,6 @@ contract PrivacyPaymasterTest is Test {
         assertEq(to.balance - before, 3 ether);
     }
 
-    function test_sweep_failedSend() public {
-        vm.deal(address(paymaster), 1 ether);
-        address payable to = payable(address(new ReceiveReverter()));
-        vm.expectRevert("sweep failed");
-        paymaster.sweep(to);
-    }
-
     function test_sweep_rejectsNonOwner() public {
         vm.prank(address(0xBAD));
         vm.expectRevert();
@@ -203,47 +179,34 @@ contract PrivacyPaymasterTest is Test {
 
     // ----- _validatePaymasterUserOp -----
 
-    function test_validate_senderNotApproved() public {
-        PackedUserOperation memory op = _buildUserOp("");
-        op.sender = address(0xDEAD);
+    function test_validate_adapterNotApproved() public {
+        PackedUserOperation memory op = _buildUserOp(address(0xDEAD));
         vm.prank(entryPointAddr);
         vm.expectRevert(
             abi.encodeWithSelector(
-                PrivacyPaymaster.SenderNotApproved.selector,
+                PrivacyPaymaster.AdapterNotApproved.selector,
                 address(0xDEAD)
             )
         );
         paymaster.validatePaymasterUserOp(op, bytes32(0), 0);
     }
 
-    function test_validate_invalidSelector() public {
-        PackedUserOperation memory op = _buildUserOp("");
-        op.callData = hex"deadbeef";
+    function test_validate_feeTokenNotAllowed() public {
+        PackedUserOperation memory op = _buildUserOp(address(adapter));
+        adapter.setFeeToken(address(0xBAAD));
         vm.prank(entryPointAddr);
         vm.expectRevert(
             abi.encodeWithSelector(
-                PrivacyPaymaster.InvalidSelector.selector,
-                bytes4(0xdeadbeef)
+                PrivacyPaymaster.FeeTokenNotAllowed.selector,
+                address(0xBAAD)
             )
         );
         paymaster.validatePaymasterUserOp(op, bytes32(0), 0);
     }
 
-    function test_validate_feeTokenNotAllowed() public {
-        address badToken = address(0xBAD);
-        _mockPreviewFee(badToken, 1 ether);
-        vm.prank(entryPointAddr);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                PrivacyPaymaster.FeeTokenNotAllowed.selector,
-                badToken
-            )
-        );
-        paymaster.validatePaymasterUserOp(_buildUserOp(""), bytes32(0), 0);
-    }
-
     function test_validate_insufficientFee() public {
-        _mockPreviewFee(address(0), 0);
+        PackedUserOperation memory op = _buildUserOp(address(adapter));
+        adapter.setFeeAmount(0 ether);
         vm.prank(entryPointAddr);
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -252,35 +215,142 @@ contract PrivacyPaymasterTest is Test {
                 0
             )
         );
-        paymaster.validatePaymasterUserOp(
-            _buildUserOp(""),
-            bytes32(0),
-            1 ether
-        );
+        paymaster.validatePaymasterUserOp(op, bytes32(0), 1 ether);
     }
 
     function test_validate_success() public {
-        _mockPreviewFee(address(0), 2 ether);
-        (bytes memory context, uint256 validationData) = _validate(
-            _buildUserOp(""),
-            1 ether
-        );
+        PackedUserOperation memory op = _buildUserOp(address(adapter));
+        vm.prank(entryPointAddr);
+        (bytes memory context, uint256 validationData) = paymaster
+            .validatePaymasterUserOp(op, bytes32(0), 0);
         assertEq(context, "");
         assertEq(validationData, 0);
     }
+
+    function test_validate_malformedPaymasterData() public {
+        PackedUserOperation memory op;
+        op.sender = sender;
+        op.paymasterAndData = abi.encodePacked(
+            address(paymaster),
+            uint128(100_000),
+            uint128(50_000),
+            bytes32(uint256(0xdead))
+        );
+        vm.prank(entryPointAddr);
+        vm.expectRevert(PrivacyPaymaster.MalformedPaymasterData.selector);
+        paymaster.validatePaymasterUserOp(op, bytes32(0), 0);
+    }
+
+    // ----- _postOp refund -----
+
+    address internal recipient = address(0xECE1);
+
+    function _validateForContext(
+        uint256 maxCost
+    ) internal returns (bytes memory ctx) {
+        PackedUserOperation memory op = _buildUserOp(address(adapter));
+        vm.prank(entryPointAddr);
+        (ctx, ) = paymaster.validatePaymasterUserOp(op, bytes32(0), maxCost);
+    }
+
+    function test_validate_returnsContextWhenRefundRecipientSet() public {
+        adapter.setRefundRecipient(recipient);
+        bytes memory ctx = _validateForContext(0.5 ether);
+        assertGt(ctx.length, 0);
+    }
+
+    function test_postOp_refundsExcessEth() public {
+        adapter.setRefundRecipient(recipient);
+        vm.deal(address(paymaster), 1 ether);
+        bytes memory ctx = _validateForContext(0.5 ether);
+
+        vm.prank(entryPointAddr);
+        paymaster.postOp(IPaymaster.PostOpMode.opSucceeded, ctx, 0.2 ether, 0);
+
+        assertEq(recipient.balance, 0.8 ether);
+        assertEq(address(paymaster).balance, 0.2 ether);
+    }
+
+    function test_postOp_refundsExcessWeth() public {
+        adapter.setFeeToken(weth);
+        adapter.setRefundRecipient(recipient);
+        deal(weth, address(paymaster), 1 ether);
+        bytes memory ctx = _validateForContext(0.5 ether);
+
+        vm.prank(entryPointAddr);
+        paymaster.postOp(IPaymaster.PostOpMode.opSucceeded, ctx, 0.2 ether, 0);
+
+        assertEq(IERC20(weth).balanceOf(recipient), 0.8 ether);
+        assertEq(IERC20(weth).balanceOf(address(paymaster)), 0.2 ether);
+    }
+
+    function test_postOp_noRefundWhenCostEqualsFee() public {
+        adapter.setRefundRecipient(recipient);
+        vm.deal(address(paymaster), 1 ether);
+        bytes memory ctx = _validateForContext(1 ether);
+
+        vm.prank(entryPointAddr);
+        paymaster.postOp(IPaymaster.PostOpMode.opSucceeded, ctx, 1 ether, 0);
+
+        assertEq(recipient.balance, 0);
+        assertEq(address(paymaster).balance, 1 ether);
+    }
+
+    function test_postOp_emptyContextNoop() public {
+        vm.deal(address(paymaster), 1 ether);
+        vm.prank(entryPointAddr);
+        paymaster.postOp(IPaymaster.PostOpMode.opSucceeded, "", 1 ether, 0);
+        assertEq(address(paymaster).balance, 1 ether);
+    }
+
+    function test_postOp_refundFailureEmitsEvent() public {
+        RejectEther rejecter = new RejectEther();
+        adapter.setRefundRecipient(address(rejecter));
+        vm.deal(address(paymaster), 1 ether);
+        bytes memory ctx = _validateForContext(0.5 ether);
+
+        vm.expectEmit(true, true, false, true);
+        emit PrivacyPaymaster.RefundFailed(
+            address(rejecter),
+            address(0),
+            0.8 ether
+        );
+
+        vm.prank(entryPointAddr);
+        paymaster.postOp(IPaymaster.PostOpMode.opSucceeded, ctx, 0.2 ether, 0);
+
+        assertEq(address(rejecter).balance, 0);
+        assertEq(address(paymaster).balance, 1 ether);
+    }
 }
 
-contract MockPrivacyAccount is BasePrivacyAccount {
-    constructor(
-        IEntryPoint _entryPoint,
-        address _protocolTarget
-    ) BasePrivacyAccount(_entryPoint, _protocolTarget) {}
+contract MockFeeAdapter is IFeeAdapter {
+    address feeToken = address(0);
+    uint256 feeAmount = 1 ether;
+    address refundRecipient = address(0);
 
-    function previewFee(
-        bytes calldata,
-        bytes calldata
-    ) external pure override returns (address, uint256) {
-        return (address(0), 0);
+    function setFeeToken(address _token) external {
+        feeToken = _token;
+    }
+
+    function setFeeAmount(uint256 _amount) external {
+        feeAmount = _amount;
+    }
+
+    function setRefundRecipient(address _r) external {
+        refundRecipient = _r;
+    }
+
+    function collectFee(
+        PackedUserOperation calldata
+    )
+        external
+        view
+        returns (address _feeToken, uint256 _feePaid, address _refundRecipient)
+    {
+        _feeToken = feeToken;
+        _feePaid = feeAmount;
+        _refundRecipient = refundRecipient;
     }
     function test() public {}
 }
@@ -316,9 +386,9 @@ contract MockERC20 is ERC20 {
     function test() public {}
 }
 
-contract ReceiveReverter {
+contract RejectEther {
     receive() external payable {
-        revert();
+        revert("no");
     }
     function test() public {}
 }

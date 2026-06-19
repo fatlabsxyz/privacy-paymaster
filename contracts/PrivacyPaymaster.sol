@@ -20,38 +20,38 @@ import {
 import {
     OracleLibrary
 } from "@uniswap/v3-periphery/contracts/libraries/OracleLibrary.sol";
-import {
-    EIP7702Utils
-} from "@openzeppelin/contracts/account/utils/EIP7702Utils.sol";
 
-import {IPrivacyAccount} from "./interfaces/IPrivacyAccount.sol";
+import {PaymasterLib} from "./libraries/PaymasterLib.sol";
+import {IFeeAdapter} from "./interfaces/IFeeAdapter.sol";
 
 struct FeeToken {
     bool allowed;
     address pool;
 }
 
+struct PostOpContext {
+    address feeToken;
+    uint256 feePaid;
+    address refundRecipient;
+    uint256 maxCost;
+    uint256 maxCostInToken;
+}
+
 /// Singleton multi-protocol privacy paymaster.
 ///
-/// A single staked paymaster that sponsors unshields from multiple
-/// privacy protocols. The paymaster enforces the following control flow:
-///   1. The paymaster is configured with a list of approved per-protocol
-///      7702 delegate implementations (e.g., `TornadoDelegate`, `RailgunDelegate`)
-///   2. Upon receiving a user operation, the paymaster checks that the sender's
-///     delegate impl is approved, that the calldata selector is `IPrivacyAccount.execute`,
-///     that the user's selected fee token is allowed, and that the quoted fee amount
-///     is sufficient to cover the operation's max cost.
+/// A single staked paymaster that can sponsor private transactions
+/// interacting with multiple privacy protocols. Transactions are paid
+/// for by the user's shielded funds, which are transferred to the paymaster's
+/// control in the validation phase.
 ///
-/// The paymaster relies on the per-protocol delegate implementations to estimate
-/// each operation's fee amount. This allows the paymaster to be agnostic to
-/// underlying privacy protocols.
+/// Protocol-specific logic is handled by adapter contracts that impl IFeeAdapter.
 contract PrivacyPaymaster is BasePaymaster {
     using SafeERC20 for IERC20;
 
     // ----- ERRORS -----
-    error SenderNotApproved(address sender);
+    error MalformedPaymasterData();
+    error AdapterNotApproved(address adapter);
     error FeeTokenNotAllowed(address feeToken);
-    error InvalidSelector(bytes4 selector);
     error InsufficientFee(uint256 required, uint256 fee);
     error OracleFailure(bytes reason);
 
@@ -61,13 +61,18 @@ contract PrivacyPaymaster is BasePaymaster {
 
     // ----- STATE -----
     uint32 public twapPeriod;
-    mapping(address => bool) public approvedImpls;
+    mapping(address => bool) public approvedAdapters;
     mapping(address => FeeToken) public feeTokens;
 
     // ----- EVENTS -----
-    event ImplApproved(address indexed impl, bool approved);
+    event AdapterApproved(address indexed adapter, bool approved);
     event FeeTokenSet(address indexed token, bool allowed);
     event TwapPeriodSet(uint32 twapPeriod);
+    event RefundFailed(
+        address indexed recipient,
+        address indexed token,
+        uint256 amount
+    );
 
     // ----- CONSTRUCTOR -----
     constructor(
@@ -88,13 +93,13 @@ contract PrivacyPaymaster is BasePaymaster {
     receive() external payable {}
 
     // ----- ADMIN -----
-    function setApprovedImpl(
-        address impl,
+    function setApprovedAdapter(
+        address adapter,
         bool approved
         // aderyn-ignore-next-line(centralization-risk)
     ) external onlyOwner {
-        approvedImpls[impl] = approved;
-        emit ImplApproved(impl, approved);
+        approvedAdapters[adapter] = approved;
+        emit AdapterApproved(adapter, approved);
     }
 
     function setTwapPeriod(
@@ -113,6 +118,7 @@ contract PrivacyPaymaster is BasePaymaster {
     ) external onlyOwner {
         address pool;
         if (allowed && token != address(0) && token != WETH) {
+            // aderyn-ignore-next-line reentrancy
             pool = FACTORY.getPool(token, WETH, uniswapFee);
             require(pool != address(0), "pool not supported");
         }
@@ -143,38 +149,92 @@ contract PrivacyPaymaster is BasePaymaster {
         override
         returns (bytes memory context, uint256 validationData)
     {
-        address senderImpl = EIP7702Utils.fetchDelegate(userOp.sender);
-        if (!approvedImpls[senderImpl]) {
-            revert SenderNotApproved(userOp.sender);
+        PaymasterLib.PaymasterData memory data;
+        try this.decodePaymasterData(userOp.paymasterAndData) returns (
+            PaymasterLib.PaymasterData memory decoded
+        ) {
+            data = decoded;
+        } catch {
+            revert MalformedPaymasterData();
+        }
+        if (!approvedAdapters[data.adapter]) {
+            revert AdapterNotApproved(data.adapter);
         }
 
-        bytes memory feeCalldata = _decodeFeeCalldata(userOp.callData);
-
-        (address feeToken, uint256 feeAmount) = IPrivacyAccount(userOp.sender)
-            .previewFee(feeCalldata, userOp.paymasterAndData);
+        (
+            address feeToken,
+            uint256 feePaid,
+            address refundRecipient
+        ) = IFeeAdapter(data.adapter).collectFee(userOp);
         if (!feeTokens[feeToken].allowed) {
             revert FeeTokenNotAllowed(feeToken);
         }
 
-        try this.quoteWeiInToken(feeToken, maxCost) returns (uint256 requiredInToken) {
-            if (feeAmount < requiredInToken) {
-                revert InsufficientFee(requiredInToken, feeAmount);
+        try this.quoteWeiInToken(feeToken, maxCost) returns (
+            uint256 requiredInToken
+        ) {
+            if (feePaid < requiredInToken) {
+                revert InsufficientFee(requiredInToken, feePaid);
             }
+
+            if (refundRecipient == address(0)) {
+                return ("", 0);
+            }
+
+            PostOpContext memory ctx = PostOpContext({
+                feeToken: feeToken,
+                feePaid: feePaid,
+                refundRecipient: refundRecipient,
+                maxCost: maxCost,
+                maxCostInToken: requiredInToken
+            });
+            context = abi.encode(ctx);
+            validationData = 0;
         } catch (bytes memory reason) {
             revert OracleFailure(reason);
         }
+    }
 
-        context = "";
-        validationData = 0;
+    function _postOp(
+        PostOpMode,
+        bytes calldata context,
+        uint256 actualGasCost,
+        uint256
+    ) internal virtual override {
+        if (context.length == 0) return;
+
+        PostOpContext memory ctx = abi.decode(context, (PostOpContext));
+        if (ctx.maxCost == 0) return;
+
+        uint256 actualTokenCost = (actualGasCost * ctx.maxCostInToken) /
+            ctx.maxCost;
+        uint256 refund = ctx.feePaid > actualTokenCost
+            ? ctx.feePaid - actualTokenCost
+            : 0;
+
+        if (refund == 0) return;
+
+        try this._refund(ctx.feeToken, ctx.refundRecipient, refund) {
+            // refund successful
+        } catch {
+            emit RefundFailed(ctx.refundRecipient, ctx.feeToken, refund);
+        }
+    }
+
+    function decodePaymasterData(
+        bytes calldata paymasterAndData
+    ) external pure returns (PaymasterLib.PaymasterData memory) {
+        return PaymasterLib.decodePaymasterAndData(paymasterAndData);
     }
 
     function quoteWeiInToken(
         address feeToken,
         uint256 weiAmount
-    ) public view returns (uint256 tokenAmount) {
+    ) external view returns (uint256 tokenAmount) {
         if (feeToken == WETH) return weiAmount;
         if (feeToken == address(0)) return weiAmount; // Native ETH
 
+        // aderyn-ignore-next-line unchecked-arithmetic
         uint128 weiAmount128 = uint128(weiAmount);
 
         address pool = feeTokens[feeToken].pool;
@@ -188,18 +248,17 @@ contract PrivacyPaymaster is BasePaymaster {
             );
     }
 
-    // ----- Internals -----
-    function _decodeFeeCalldata(
-        bytes calldata useropCalldata
-    ) internal pure returns (bytes memory feeCalldata) {
-        bool isValidSelector = bytes4(useropCalldata[:4]) ==
-            IPrivacyAccount.execute.selector;
-        if (!isValidSelector)
-            revert InvalidSelector(bytes4(useropCalldata[:4]));
-
-        (feeCalldata, ) = abi.decode(
-            useropCalldata[4:],
-            (bytes, IPrivacyAccount.Call[])
-        );
+    function _refund(
+        address feeToken,
+        address refundRecipient,
+        uint256 refund
+    ) external {
+        require(msg.sender == address(this));
+        if (feeToken == address(0)) {
+            (bool ok, ) = refundRecipient.call{value: refund}("");
+            require(ok);
+        } else {
+            IERC20(feeToken).safeTransfer(refundRecipient, refund);
+        }
     }
 }
